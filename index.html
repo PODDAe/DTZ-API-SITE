@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DTZ DULA API OFC - Documentation</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar styling for a cleaner look */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background-color: #4a5568; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background-color: transparent; }
+        
+        /* === BACKGROUND IMAGE STYLES === */
+        body {
+            /* Set the specific image as the background */
+            background-image: url('https://files.catbox.moe/baphhq.jpg');
+            background-size: cover;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            background-color: #0f172a; /* Fallback */
+            color: #e5e7eb; /* gray-200 */
+            font-family: 'Inter', sans-serif;
+        }
+        
+        /* Custom background color with opacity for components to ensure text readability */
+        .bg-secondary-dark-translucent {
+            background-color: rgba(30, 41, 59, 0.95); /* Slate-800 with 95% opacity */
+        }
+        
+        .bg-live-request {
+            background-color: rgba(17, 24, 39, 0.95); /* Gray-900 with 95% opacity */
+        }
+
+        /* Style for code blocks */
+        pre {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 0.875rem; /* text-sm */
+            background-color: rgba(30, 41, 59, 0.8); /* Slate-800, slightly translucent for code */
+        }
+        .endpoint-section {
+            scroll-margin-top: 6rem; /* Offset for fixed header */
+        }
+        
+        .code-example {
+            transition: opacity 0.3s ease-in-out;
+        }
+        .hidden-code {
+            display: none;
+        }
+        .tab-button {
+            cursor: pointer;
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-dark': '#0f172a',
+                        'secondary-dark': '#1e293b',
+                        'accent-blue': '#3b82f6',
+                        'green-400': '#4ade80'
+                    }
+                },
+                fontFamily: {
+                    sans: ['Inter', 'sans-serif'],
+                }
+            }
+        }
+
+        const API_BASE_URL = "https://dtzdula.api.com/api";
+
+        // Simple smooth scroll navigation
+        function scrollToSection(id) {
+            document.getElementById(id).scrollIntoView({ behavior: 'smooth' });
+            if (window.innerWidth < 1024) {
+                toggleSidebar(false);
+            }
+        }
+        
+        // Mobile menu toggle
+        function toggleSidebar(manual = true) {
+            const sidebar = document.getElementById('sidebar');
+            const menuIcon = document.getElementById('menu-icon');
+            
+            if (manual || sidebar.classList.contains('hidden')) {
+                sidebar.classList.toggle('hidden');
+                menuIcon.innerHTML = sidebar.classList.contains('hidden') 
+                    ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>'
+                    : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>';
+            }
+        }
+
+        // === Code Example Tabs Logic ===
+        function showCodeExample(endpointId, lang) {
+            const container = document.getElementById(endpointId);
+            // Hide all code examples in this section
+            container.querySelectorAll('.code-example').forEach(el => {
+                el.classList.add('hidden-code');
+            });
+            // Show the selected code example
+            document.getElementById(`code-${endpointId}-${lang}`).classList.remove('hidden-code');
+
+            // Update tab styling
+            container.querySelectorAll('.tab-button').forEach(btn => {
+                if (btn.getAttribute('data-lang') === lang) {
+                    btn.classList.add('text-accent-blue', 'border-accent-blue');
+                    btn.classList.remove('text-gray-400', 'hover:text-white', 'border-transparent', 'hover:border-gray-600');
+                } else {
+                    btn.classList.remove('text-accent-blue', 'border-accent-blue');
+                    btn.classList.add('text-gray-400', 'hover:text-white', 'border-transparent', 'hover:border-gray-600');
+                }
+            });
+        }
+        
+        window.onload = () => {
+            // Initialize all code sections to show JavaScript by default
+            document.querySelectorAll('.endpoint-section').forEach(section => {
+                const id = section.id;
+                showCodeExample(id, 'js');
+            });
+        };
+        
+        // === Live API Test Logic ===
+        
+        /**
+         * Generic function to fetch API data with exponential backoff.
+         */
+        async function fetchApiData(url, options, maxRetries = 3) {
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        // Throw specific error for fetch errors
+                        const errorBody = await response.json();
+                        throw new Error(JSON.stringify(errorBody, null, 2));
+                    }
+                    return await response.json();
+                } catch (error) {
+                    if (attempt === maxRetries - 1) {
+                        throw error;
+                    }
+                    // Exponential backoff
+                    const delay = Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 1000);
+                    // Do not log retries as errors in the console per system instructions
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        /**
+         * Runs the Live Test for a specific endpoint.
+         */
+        async function runLiveTest(endpointId, endpointPath) {
+            const outputBox = document.getElementById(`output-${endpointId}`);
+            const apiKey = document.getElementById(`apiKey-${endpointId}`)?.value.trim() || '';
+            const testButton = document.getElementById(`testBtn-${endpointId}`);
+
+            if (!apiKey) {
+                outputBox.textContent = JSON.stringify({ error: "API Key is required for live testing." }, null, 2);
+                return;
+            }
+
+            // Collect parameters dynamically
+            const params = {};
+            document.querySelectorAll(`#${endpointId} input[data-param]`).forEach(input => {
+                if (input.value.trim()) {
+                    params[input.getAttribute('data-param')] = input.value.trim();
+                }
+            });
+
+            // Construct URLSearchParams
+            const urlParams = new URLSearchParams(params);
+            const fullUrl = `${API_BASE_URL}${endpointPath}?${urlParams.toString()}`;
+
+            // Set up request headers (using Authorization header as recommended)
+            const options = {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                }
+            };
+            
+            // UI Feedback (Loading State)
+            const originalText = testButton.innerHTML;
+            testButton.innerHTML = 'Testing...';
+            testButton.disabled = true;
+
+            try {
+                outputBox.textContent = JSON.stringify({ message: "Requesting data..." }, null, 2);
+                const data = await fetchApiData(fullUrl, options);
+                outputBox.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                // If it's a JSON error from API, it's already stringified.
+                // Otherwise, it's a network error.
+                let errorMessage = error.message || "Network Error: Could not reach the API.";
+                
+                try {
+                    // Try to parse the error message if it looks like stringified JSON
+                    const parsedError = JSON.parse(errorMessage);
+                    errorMessage = JSON.stringify(parsedError, null, 2);
+                } catch (e) {
+                    // If parsing fails, just use the original message
+                    errorMessage = JSON.stringify({ error: errorMessage }, null, 2);
+                }
+                
+                outputBox.textContent = errorMessage;
+            } finally {
+                // Restore button state
+                testButton.innerHTML = originalText;
+                testButton.disabled = false;
+            }
+        }
+
+        /**
+         * Opens the request URL in a new browser tab using query parameters.
+         */
+        function runBrowserTest(endpointId, endpointPath) {
+            const apiKey = document.getElementById(`apiKey-${endpointId}`)?.value.trim() || '';
+            
+            if (!apiKey) {
+                alert("Please enter the API Key before running a browser test.");
+                return;
+            }
+
+            // Collect parameters dynamically
+            const params = { apiKey: apiKey }; // Include API Key as query param for browser test
+            document.querySelectorAll(`#${endpointId} input[data-param]`).forEach(input => {
+                if (input.value.trim()) {
+                    params[input.getAttribute('data-param')] = input.value.trim();
+                }
+            });
+
+            const urlParams = new URLSearchParams(params);
+            const fullUrl = `${API_BASE_URL}${endpointPath}?${urlParams.toString()}`;
+            window.open(fullUrl, '_blank');
+        }
+
+        // Helper function to generate the core content structure
+        function generateApiSectionContent(endpointId, title, method, path, cost, params, jsCode, pyCode, placeholder = "Run a Live Test to see the API Output.") {
+            
+            // Generate parameter inputs HTML
+            const paramInputs = params.map(p => `
+                <div class="mb-4">
+                    <label for="${p.id}-${endpointId}" class="block text-sm font-medium text-gray-400">${p.label}</label>
+                    <input type="${p.type}" id="${p.id}-${endpointId}" data-param="${p.id}" class="w-full mt-1 p-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-accent-blue focus:border-accent-blue" placeholder="${p.placeholder}">
+                </div>
+            `).join('');
+
+            return `
+                <h2 class="text-2xl font-bold text-accent-blue mb-4">${title}</h2>
+                <div class="endpoint-box p-4 bg-gray-800 bg-opacity-70 rounded-lg mb-4">
+                    <span class="bg-green-600 text-white text-xs font-semibold px-3 py-1 rounded-full mr-2">${method}</span>
+                    <code class="text-lg text-green-400">${API_BASE_URL}${path}</code>
+                </div>
+
+                <div class="lg:grid lg:grid-cols-3 lg:gap-6 mt-6">
+                    <!-- Column 1: Live API Request -->
+                    <div class="lg:col-span-1 p-4 bg-live-request rounded-xl shadow-xl border border-gray-700">
+                        <h3 class="text-lg font-bold text-green-400 mb-4 flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> Live API Request
+                        </h3>
+                        
+                        <!-- API Key Input -->
+                        <div class="mb-4">
+                            <label for="apiKey-${endpointId}" class="block text-sm font-medium text-gray-400">Your API Key (apiKey)</label>
+                            <input type="password" id="apiKey-${endpointId}" class="w-full mt-1 p-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:ring-accent-blue focus:border-accent-blue" placeholder="Enter Your API Key">
+                        </div>
+                        
+                        <!-- Parameter Inputs -->
+                        ${paramInputs}
+                        
+                        <div class="flex space-x-3 mt-6">
+                            <button id="testBtn-${endpointId}" onclick="runLiveTest('${endpointId}', '${path}')" class="flex-1 bg-green-700 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-200">
+                                Test API Call
+                            </button>
+                            <button onclick="runBrowserTest('${endpointId}', '${path}')" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white font-semibold py-2 px-4 rounded-lg transition duration-200 flex items-center justify-center">
+                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg> Browser Test
+                            </button>
+                        </div>
+                        <p class="text-xs text-right text-gray-500 mt-2">${cost}</p>
+                    </div>
+                    
+                    <!-- Column 2: Live API Output & Code Examples -->
+                    <div class="lg:col-span-2 mt-6 lg:mt-0">
+                        <div class="mb-6">
+                            <h3 class="text-lg font-bold text-white mb-2">Live API Output (JSON)</h3>
+                            <pre id="output-${endpointId}" class="min-h-[12rem] text-sm text-gray-300">
+{
+  "message": "${placeholder}"
+}
+                            </pre>
+                        </div>
+                        
+                        <!-- Code Examples -->
+                        <h3 class="text-lg font-bold text-white mb-2">Code Examples</h3>
+                        <div class="bg-gray-800 bg-opacity-70 rounded-lg p-4">
+                            <!-- Tabs -->
+                            <div class="flex border-b border-gray-700 mb-4">
+                                <button class="tab-button p-2 text-sm text-accent-blue border-b-2 border-accent-blue font-semibold" data-lang="js" onclick="showCodeExample('${endpointId}', 'js')">JavaScript (Axios)</button>
+                                <button class="tab-button p-2 text-sm text-gray-400 hover:text-white border-b-2 border-transparent hover:border-gray-600 font-semibold ml-4" data-lang="py" onclick="showCodeExample('${endpointId}', 'py')">Python (Requests)</button>
+                            </div>
+                            <!-- Content -->
+                            <div id="code-${endpointId}-js" class="code-example text-sm hidden-code">
+                                <pre class="!bg-transparent !p-0">${jsCode}</pre>
+                            </div>
+                            <div id="code-${endpointId}-py" class="code-example text-sm hidden-code">
+                                <pre class="!bg-transparent !p-0">${pyCode}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    </script>
+</head>
+
+<body>
+    <!-- Hidden autoplaying audio element (no visible controls) -->
+    <audio id="dtz-audio" autoplay playsinline preload="auto" src="https://files.catbox.moe/1rytp5.mp3" style="display:none"></audio>
+    <!-- Fixed Header/Navigation Bar -->
+    <header class="sticky top-0 z-50 bg-secondary-dark-translucent shadow-xl border-b border-gray-700">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
+            <a href="#" class="text-2xl font-extrabold tracking-wider text-accent-blue">
+                DTZ DULA API OFC
+            </a>
+            
+            <!-- Mobile Menu Button -->
+            <button id="toggle-menu" onclick="toggleSidebar(true)" class="lg:hidden p-2 rounded-lg text-gray-400 hover:bg-gray-700 focus:outline-none">
+                <svg id="menu-icon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Layout Grid -->
+    <div class="lg:flex max-w-7xl mx-auto">
+        
+        <!-- Sidebar Navigation (Fixed on Desktop, Collapsible on Mobile) -->
+        <nav id="sidebar" class="fixed inset-0 z-40 lg:static lg:w-1/4 xl:w-1/5 bg-secondary-dark-translucent p-6 lg:sticky lg:top-16 h-full lg:h-[calc(100vh-4rem)] overflow-y-auto hidden lg:block border-r border-gray-700">
+            <div class="space-y-6">
+                <h2 class="text-xl font-bold text-gray-100">API Endpoints (Total: 16)</h2>
+                
+                <ul class="space-y-1 text-sm">
+                    <!-- Authentication & Key Management -->
+                    <li class="font-bold text-gray-400 pt-2">Authentication</li>
+                    <li><a href="#auth-status" onclick="scrollToSection('auth-status')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">1. Key Authentication & Status</a></li>
+                    
+                    <!-- Downloaders -->
+                    <li class="font-bold text-gray-400 pt-2">Downloaders</li>
+                    <li><a href="#yt-downloader" onclick="scrollToSection('yt-downloader')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">2. YouTube Downloader API</a></li>
+                    <li><a href="#ph-download" onclick="scrollToSection('ph-download')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">7. PH Download Links API</a></li>
+                    <li><a href="#tiktok-download" onclick="scrollToSection('tiktok-download')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">15. TikTok Download Links API</a></li>
+                    <li><a href="#mega-download" onclick="scrollToSection('mega-download')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">16. MEGA Download Links API</a></li>
+
+                    <!-- Search & Details -->
+                    <li class="font-bold text-gray-400 pt-2">Search & Media Details</li>
+                    <li><a href="#cineru-search" onclick="scrollToSection('cineru-search')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">3. Cineru Search API</a></li>
+                    <li><a href="#cineru-movie" onclick="scrollToSection('cineru-movie')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">4. Cineru Movie Details API</a></li>
+                    <li><a href="#cineru-tvshow" onclick="scrollToSection('cineru-tvshow')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">5. Cineru TV Show Episodes API</a></li>
+                    <li><a href="#ph-search" onclick="scrollToSection('ph-search')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">6. PH Search API</a></li>
+                    <li><a href="#cinesubz-search" onclick="scrollToSection('cinesubz-search')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">9. Cinesubz Search API</a></li>
+                    <li><a href="#cinesubz-movie-details" onclick="scrollToSection('cinesubz-movie-details')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">10. Cinesubz Movie Details</a></li>
+                    <li><a href="#cinesubz-tvshow-details" onclick="scrollToSection('cinesubz-tvshow-details')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">11. Cinesubz TV Show Details</a></li>
+                    <li><a href="#cinesubz-episode-details" onclick="scrollToSection('cinesubz-episode-details')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">12. Cinesubz Episode Details</a></li>
+                    <li><a href="#cinesubz-download" onclick="scrollToSection('cinesubz-download')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">13. Cinesubz Download API</a></li>
+                    <li><a href="#tiktok-search" onclick="scrollToSection('tiktok-search')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">14. TikTok Search API</a></li>
+
+                    <!-- AI Tools -->
+                    <li class="font-bold text-gray-400 pt-2">AI Tools</li>
+                    <li><a href="#nano-banana" onclick="scrollToSection('nano-banana')" class="block p-2 rounded-lg text-gray-300 hover:bg-gray-700 transition duration-150">8. Nano Banana AI</a></li>
+                </ul>
+            </div>
+        </nav>
+
+        <!-- Main Documentation Content -->
+        <main id="main-content" class="lg:w-3/4 xl:w-4/5 p-6 space-y-10">
+            <div class="prose prose-invert max-w-none pb-6 border-b border-gray-700">
+                <h1 class="text-3xl font-extrabold text-white mb-4">API Documentation</h1>
+                <p class="text-lg text-gray-400">
+                    All the necessary information to integrate the DTZ DULA API services into your application.
+                </p>
+                <div class="p-4 bg-blue-900 bg-opacity-30 border border-blue-700 rounded-lg text-blue-300 text-sm mt-6">
+                    <strong>API Key Usage:</strong> The API Key must be sent in the <code class="font-mono">Authorization: Bearer &lt;Key&gt;</code> HTTP header (Recommended) OR as an <code class="font-mono">apiKey</code> URL query parameter for all external requests.
+                </div>
+            </div>
+
+            <!-- 1. Authentication & Key Status -->
+            <section id="auth-status" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('auth-status').innerHTML = generateApiSectionContent(
+                        'auth-status',
+                        '1. Authentication & Key Status',
+                        'GET',
+                        '/user/details',
+                        '(Cost: 0 Coins (Free))',
+                        [],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const API_BASE_URL = "${API_BASE_URL}";
+const ENDPOINT = "/user/details";
+
+async function fetchData() {
+    try {
+        const response = await axios.get(\`\${API_BASE_URL}\${ENDPOINT}\`, {
+            headers: { 'Authorization': \`Bearer \${API_KEY}\` }
+        });
+        console.log("Auth Status Success:", response.data);
+    } catch (error) {
+        console.error("Auth Status Failed:", error.response?.data || error.message);
+    }
+}`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+API_BASE_URL = "${API_BASE_URL}"
+ENDPOINT = "/user/details"
+headers = { 'Authorization': f'Bearer {API_KEY}' }
+
+try:
+    response = requests.get(f"{API_BASE_URL}{ENDPOINT}", headers=headers)
+    response.raise_for_status()
+    print("Auth Status Success:", response.json())
+except requests.exceptions.RequestException as e:
+    print("Auth Status Failed:", e)`
+                    );
+                </script>
+            </section>
+
+            <!-- 2. YouTube Downloader API -->
+            <section id="yt-downloader" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('yt-downloader').innerHTML = generateApiSectionContent(
+                        'yt-downloader',
+                        '2. YouTube Downloader API',
+                        'GET',
+                        '/ytapi',
+                        '(Cost: 0 Coins (Free))',
+                        [
+                            { id: 'url', label: 'YouTube Video URL (url)', type: 'url', placeholder: 'https://youtu.be/...' },
+                            { id: 'fo', label: 'Output Format (fo: 1=MP4, 2=MP3)', type: 'number', placeholder: '1 or 2' },
+                            { id: 'qu', label: 'Quality (qu: 360, 720, 1080)', type: 'number', placeholder: '720' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/ytapi";
+const params = { url: "VIDEO_URL", fo: 1, qu: 720 };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/ytapi"
+params = { 'url': "VIDEO_URL", 'fo': 1, 'qu': 720 }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 3. Cineru Search API -->
+            <section id="cineru-search" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cineru-search').innerHTML = generateApiSectionContent(
+                        'cineru-search',
+                        '3. Cineru Search API',
+                        'GET',
+                        '/cineru/search',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'query', label: 'Movie/TV Series Name (query)', type: 'text', placeholder: 'e.g., Dune' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cineru/search";
+const params = { query: "new" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cineru/search"
+params = { 'query': "new" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+            
+            <!-- 4. Cineru Movie & Episode Details API -->
+            <section id="cineru-movie" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cineru-movie').innerHTML = generateApiSectionContent(
+                        'cineru-movie',
+                        '4. Cineru Movie & Episode Details API',
+                        'GET',
+                        '/cineru/movie',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'url', label: 'Cineru Movie/Episode URL (url)', type: 'url', placeholder: 'https://cineru.lk/movie...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cineru/movie";
+const params = { url: "CINERU_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cineru/movie"
+params = { 'url': "CINERU_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 5. Cineru TV Show Episodes API -->
+            <section id="cineru-tvshow" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cineru-tvshow').innerHTML = generateApiSectionContent(
+                        'cineru-tvshow',
+                        '5. Cineru TV Show Episodes API',
+                        'GET',
+                        '/cineru/tvshow',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'url', label: 'Cineru TV Show URL (url)', type: 'url', placeholder: 'https://cineru.lk/series...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cineru/tvshow";
+const params = { url: "CINERU_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cineru/tvshow"
+params = { 'url': "CINERU_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 6. PH Search API -->
+            <section id="ph-search" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('ph-search').innerHTML = generateApiSectionContent(
+                        'ph-search',
+                        '6. PH Search API',
+                        'GET',
+                        '/ph/search',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'q', label: 'Search Query (q)', type: 'text', placeholder: 'e.g., Asian Lesbian' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/ph/search";
+const params = { q: "asian lesbian" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/ph/search"
+params = { 'q': "asian lesbian" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 7. PH Download Links API -->
+            <section id="ph-download" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('ph-download').innerHTML = generateApiSectionContent(
+                        'ph-download',
+                        '7. PH Download Links API',
+                        'GET',
+                        '/ph/download',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'url', label: 'PH Video URL (url)', type: 'url', placeholder: 'https://ph.com/video...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/ph/download";
+const params = { url: "PH_VIDEO_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/ph/download"
+params = { 'url': "PH_VIDEO_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 8. Nano Banana AI -->
+            <section id="nano-banana" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('nano-banana').innerHTML = generateApiSectionContent(
+                        'nano-banana',
+                        '8. Nano Banana AI',
+                        'GET',
+                        '/nanobanana',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'prompt', label: 'Transformation Prompt (prompt)', type: 'text', placeholder: 'e.g., make it look like an oil painting' },
+                            { id: 'imageUrl', label: 'Source Image URL (imageUrl)', type: 'url', placeholder: 'https://example.com/image.jpg' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/nanobanana";
+const params = { prompt: "oil painting", imageUrl: "IMAGE_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/nanobanana"
+params = { 'prompt': "oil painting", 'imageUrl': "IMAGE_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 9. Cinesubz Search API -->
+            <section id="cinesubz-search" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cinesubz-search').innerHTML = generateApiSectionContent(
+                        'cinesubz-search',
+                        '9. Cinesubz Search API',
+                        'GET',
+                        '/cinesubz/search',
+                        '(Cost: 0 Coins (Free))',
+                        [
+                            { id: 'query', label: 'Movie/TV Series Name (query)', type: 'text', placeholder: 'e.g., Lord of the Rings' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cinesubz/search";
+const params = { query: "Lord of the Rings" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cinesubz/search"
+params = { 'query': "Lord of the Rings" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+            
+            <!-- 10. Cinesubz Movie Details API -->
+            <section id="cinesubz-movie-details" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cinesubz-movie-details').innerHTML = generateApiSectionContent(
+                        'cinesubz-movie-details',
+                        '10. Cinesubz Movie Details API',
+                        'GET',
+                        '/cinesubz/movie-details',
+                        '(Cost: 0 Coins (Free))',
+                        [
+                            { id: 'url', label: 'Cinesubz Movie URL (url)', type: 'url', placeholder: 'https://cinesubz.co/movie...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cinesubz/movie-details";
+const params = { url: "CINESUBZ_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cinesubz/movie-details"
+params = { 'url': "CINESUBZ_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+            
+            <!-- 11. Cinesubz TV Show Details API -->
+            <section id="cinesubz-tvshow-details" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cinesubz-tvshow-details').innerHTML = generateApiSectionContent(
+                        'cinesubz-tvshow-details',
+                        '11. Cinesubz TV Show Details API',
+                        'GET',
+                        '/cinesubz/tvshow-details',
+                        '(Cost: 0 Coins (Free))',
+                        [
+                            { id: 'url', label: 'Cinesubz TV Show URL (url)', type: 'url', placeholder: 'https://cinesubz.co/series...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cinesubz/tvshow-details";
+const params = { url: "CINESUBZ_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cinesubz/tvshow-details"
+params = { 'url': "CINESUBZ_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 12. Cinesubz Episode Details API -->
+            <section id="cinesubz-episode-details" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cinesubz-episode-details').innerHTML = generateApiSectionContent(
+                        'cinesubz-episode-details',
+                        '12. Cinesubz Episode Details API',
+                        'GET',
+                        '/cinesubz/episode-details',
+                        '(Cost: 0 Coins (Free))',
+                        [
+                            { id: 'url', label: 'Cinesubz Episode URL (url)', type: 'url', placeholder: 'https://cinesubz.co/episode...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cinesubz/episode-details";
+const params = { url: "CINESUBZ_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cinesubz/episode-details"
+params = { 'url': "CINESUBZ_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 13. Cinesubz Download API -->
+            <section id="cinesubz-download" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('cinesubz-download').innerHTML = generateApiSectionContent(
+                        'cinesubz-download',
+                        '13. Cinesubz Download API',
+                        'GET',
+                        '/cinesubz/download',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'url', label: 'Cinesubz Content URL (url)', type: 'url', placeholder: 'https://cinesubz.co/download...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/cinesubz/download";
+const params = { url: "CINESUBZ_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/cinesubz/download"
+params = { 'url': "CINESUBZ_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 14. TikTok Search API -->
+            <section id="tiktok-search" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('tiktok-search').innerHTML = generateApiSectionContent(
+                        'tiktok-search',
+                        '14. TikTok Search API',
+                        'GET',
+                        '/tiktok/search',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'q', label: 'Search Query (q)', type: 'text', placeholder: 'e.g., funny dogs' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/tiktok/search";
+const params = { q: "funny dogs" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/tiktok/search"
+params = { 'q': "funny dogs" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+            <!-- 15. TikTok Download Links API -->
+            <section id="tiktok-download" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('tiktok-download').innerHTML = generateApiSectionContent(
+                        'tiktok-download',
+                        '15. TikTok Download Links API',
+                        'GET',
+                        '/tiktok/download',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'url', label: 'TikTok Video URL (url)', type: 'url', placeholder: 'https://vm.tiktok.com/...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/tiktok/download";
+const params = { url: "TIKTOK_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/tiktok/download"
+params = { 'url': "TIKTOK_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+            
+            <!-- 16. MEGA Download (Fast) Links API -->
+            <section id="mega-download" class="endpoint-section p-6 bg-secondary-dark-translucent rounded-xl shadow-lg border border-gray-700">
+                <script>
+                    document.getElementById('mega-download').innerHTML = generateApiSectionContent(
+                        'mega-download',
+                        '16. MEGA Download (Fast) Links API',
+                        'GET',
+                        '/mega',
+                        '(Cost: ?? Coins)',
+                        [
+                            { id: 'url', label: 'MEGA File URL (url)', type: 'url', placeholder: 'https://mega.nz/file/...' }
+                        ],
+                        `import axios from 'axios';
+const API_KEY = "YOUR_API_KEY_HERE";
+const ENDPOINT = "/mega";
+const params = { url: "MEGA_URL" };
+
+// ... rest of the code is similar to the live test logic ...`,
+                        `import requests
+API_KEY = "YOUR_API_KEY_HERE"
+ENDPOINT = "/mega"
+params = { 'url': "MEGA_URL" }
+
+# ... rest of the code is similar to the live test logic ...`
+                    );
+                </script>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-secondary-dark-translucent border-t border-gray-700 p-6 text-center text-sm text-gray-500">
+        &copy; 2024 DTZ DULA API OFC. All rights reserved. | Documentation based on ASITHA-MD API Docs.
+    </footer>
+    <!-- Autoplay enabled on audio element; removed autoplay-fallback script per user request. -->
+</body>
+</html>
